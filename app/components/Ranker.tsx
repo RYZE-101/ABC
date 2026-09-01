@@ -3,47 +3,46 @@
 import { useEffect, useMemo, useState } from "react";
 import { profiles, type Profile } from "../data/profiles";
 
+type Answers = { productivity: number; atmosphere: number; digital: number; serious: number };
+const questions: { key: keyof Answers; label: string; aside: string }[] = [
+  { key: "productivity", label: "Wie produktiv ist der Unterricht?", aside: "Kommt ihr gut voran oder zieht sich jede Minute?" },
+  { key: "atmosphere", label: "Wie lustig und angenehm ist die Lehrkraft?", aside: "Gute Stimmung, ohne dass der Unterricht kippt." },
+  { key: "digital", label: "Wie streng ist die Lehrkraft bei Digitalisierung / iPads?", aside: "Locker bei Technik oder eher iPad-Polizei?" },
+  { key: "serious", label: "Wie ernst ist die Lehrkraft?", aside: "Komplett fokussiert oder darf auch mal gelacht werden?" },
+];
+
 export function Ranker() {
-  const [auraScores, setAuraScores] = useState<Record<number, number>>({});
-  const [pair, setPair] = useState<[Profile, Profile]>([profiles[0], profiles[1]]);
+  const [scores, setScores] = useState<Record<number, number>>({});
+  const [ratedToday, setRatedToday] = useState<number[]>([]);
+  const [selected, setSelected] = useState<Profile | null>(null);
+  const [answers, setAnswers] = useState<Answers>({ productivity: 0, atmosphere: 0, digital: 0, serious: 0 });
+  const [view, setView] = useState<"grid" | "list">("grid");
+  const [query, setQuery] = useState("");
   const [ready, setReady] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [picked, setPicked] = useState<number[]>([]);
-  const [remaining, setRemaining] = useState(40);
-  useEffect(() => {
-    fetch("/api/votes").then(response => response.json()).then(data => { setAuraScores(data.aura || {}); setPicked(data.picked || []); setRemaining(data.remaining ?? 40); }).finally(() => setReady(true));
-  }, []);
-  const nextPair = (previous?: number, excluded = picked) => {
-    const available = profiles.filter(profile => !excluded.includes(profile.id) && profile.id !== previous);
-    if (available.length < 2) return;
-    const first = available[Math.floor(Math.random() * available.length)];
-    const rest = available.filter(profile => profile.id !== first.id);
-    const second = rest[Math.floor(Math.random() * rest.length)];
-    setPair([first, second]);
-  };
-  const vote = async (id: number) => {
-    if (saving) return;
-    setSaving(true);
-    setMessage(null);
-    const response = await fetch("/api/votes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: id }) });
-    if (response.ok) {
-      const data = await response.json();
-      setAuraScores(current => ({ ...current, [id]: (current[id] || 0) + (data.auraPoints || 0) }));
-      setPicked(current => [...current, id]);
-      setRemaining(data.remaining ?? remaining - 1);
-      nextPair(id, [...picked, id]);
-    }
-    if (!response.ok) {
-      const data = await response.json().catch(() => ({}));
-      if (response.status === 409) { const updatedPicked = [...new Set([...picked, id])]; setPicked(updatedPicked); setMessage(null); nextPair(id, updatedPicked); }
-      else { setMessage(data.error || "Vote konnte nicht gespeichert werden"); if (response.status === 429) setRemaining(0); }
-    }
+
+  const load = () => fetch("/api/votes").then(response => response.json()).then(data => { setScores(data.scores || {}); setRatedToday(data.ratedToday || []); }).finally(() => setReady(true));
+  useEffect(() => { load(); }, []);
+  const score = (id: number) => scores[id] || 0;
+  const filtered = useMemo(() => profiles.filter(profile => `${profile.name} ${profile.subject}`.toLowerCase().includes(query.toLowerCase())), [query]);
+  const leaderboard = useMemo(() => [...profiles].sort((a, b) => score(b.id) - score(a.id)), [scores]);
+  const openProfile = (profile: Profile) => { setSelected(profile); setMessage(null); setAnswers({ productivity: 0, atmosphere: 0, digital: 0, serious: 0 }); };
+  const submit = async () => {
+    if (!selected || Object.values(answers).some(value => value === 0)) { setMessage("Bitte alle drei Fragen beantworten."); return; }
+    setSaving(true); setMessage(null);
+    const response = await fetch("/api/votes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ profileId: selected.id, ...answers }) });
+    const data = await response.json().catch(() => ({}));
+    if (response.ok) { setSelected(null); await load(); }
+    else setMessage(data.error || "Bewertung konnte nicht gespeichert werden.");
     setSaving(false);
   };
-  const aura = (id: number) => auraScores[id] || 0;
-  const leaderboard = useMemo(() => [...profiles].sort((a, b) => aura(b.id) - aura(a.id)).slice(0, 5), [auraScores]);
-  if (!ready) return <div className="rank-loading">LOAD RANKING...</div>;
-  const card = (profile: Profile, number: string) => <article className="profile-card" style={{ backgroundColor: profile.color }}><div className="test-photo" aria-hidden="true"><span>TEST<br />PHOTO</span></div><div className="profile-overlay"><span>AURA {aura(profile.id).toLocaleString("de-DE")}</span><h2>{profile.name}</h2><p>{profile.subject}</p><div><b>LEHRKRAFT</b><b>TESTDATEN</b></div></div><button aria-label={`Vote for ${profile.name}`} onClick={() => vote(profile.id)} disabled={saving}>PICK <strong>{number}</strong></button></article>;
-  return <main className="rank-page"><section className="rank-head"><div><p className="eyebrow">02 / PEOPLE&apos;S CHOICE</p><h1>WHO&apos;S<br /><em>YOUR PICK?</em></h1></div><p>Waehle die Lehrkraft mit der staerksten Aura. Deine Stimme fliesst in das oeffentliche Schul-Ranking ein.</p></section><section className="match">{message && <p className="vote-message">{message}</p>}{remaining === 0 ? <div className="vote-finished"><h2>SESSION COMPLETE</h2><p>Du hast alle 40 Picks verwendet.</p></div> : <>{card(pair[0], "01")} <div className="versus">VS</div>{card(pair[1], "02")}</>}</section><section className="leaderboard"><div><p className="eyebrow">LIVE PUBLIC BOARD</p><h2>TOP FIVE</h2></div><ol>{leaderboard.map((p, index) => <li key={p.id}><span>0{index + 1}</span><i className="rank-swatch" style={{ backgroundColor: p.color }} /><b>{p.name}</b><small>{p.subject} · AURA {aura(p.id).toLocaleString("de-DE")}</small><em>LIVE</em></li>)}</ol></section></main>;
+  if (!ready) return <div className="rank-loading">LOAD LIVE RANKING...</div>;
+  return <main className="rank-page">
+    <section className="rank-head"><div><p className="eyebrow">02 / SCHOOL BOARD</p><h1>TEACHER<br /><em>AURA RANK</em></h1></div><p>Oeffne ein Profil und bewerte den Unterricht. Jede Lehrkraft kann einmal pro Tag neu bewertet werden.</p></section>
+    <section className="directory-bar"><div><b>40</b> LEHRKRAEFTE <span>/</span> LIVE RANKING</div><input aria-label="Lehrkraefte suchen" placeholder="SEARCH TEACHER..." value={query} onChange={event => setQuery(event.target.value)} /><div className="view-switch"><button className={view === "grid" ? "selected" : ""} onClick={() => setView("grid")}>GRID</button><button className={view === "list" ? "selected" : ""} onClick={() => setView("list")}>LIST</button></div></section>
+    <section className={`teacher-directory ${view}`}>{filtered.map(profile => { const rank = leaderboard.findIndex(item => item.id === profile.id) + 1; const rated = ratedToday.includes(profile.id); return <button className="teacher-tile" key={profile.id} onClick={() => openProfile(profile)}><span className="teacher-art" style={{ backgroundColor: profile.color }}><i>{String(rank).padStart(2, "0")}</i><b>TEST<br />PHOTO</b>{rated && <em>✓</em>}</span><span className="teacher-copy"><strong>{profile.name}</strong><small>{profile.subject}</small><label>AURA {score(profile.id).toLocaleString("de-DE")}</label></span></button>; })}</section>
+    <section className="live-board"><div><p className="eyebrow">LIVE SCOREBOARD</p><h2>ALL TEACHERS</h2></div><ol>{leaderboard.map((profile, index) => <li key={profile.id}><span>{String(index + 1).padStart(2, "0")}</span><i style={{ backgroundColor: profile.color }} /><b>{profile.name}</b><small>{profile.subject}</small><strong>{score(profile.id).toLocaleString("de-DE")} AURA</strong></li>)}</ol></section>
+    {selected && <div className="survey-backdrop" role="dialog" aria-modal="true"><section className="survey"><button className="close-survey" onClick={() => setSelected(null)} aria-label="Profil schliessen">×</button><div className="survey-hero" style={{ backgroundColor: selected.color }}><span>TEACHER PROFILE</span><b>TEST IMAGE 2:3</b></div><p className="eyebrow">RATE / {selected.subject.toUpperCase()}</p><h2>{selected.name}</h2><p className="survey-sub">Deine Bewertung wird zu einem Score von 0 bis 1.000.000 verrechnet.</p>{questions.map(question => <fieldset key={question.key}><legend>{question.label}</legend><p className="question-aside">{question.aside}</p><div className="rating-options">{[1, 2, 3, 4, 5].map(value => <button className={answers[question.key] === value ? "selected" : ""} key={value} onClick={() => setAnswers(current => ({ ...current, [question.key]: value }))}>{value}</button>)}</div><small>1 = niedrig · 5 = sehr hoch</small></fieldset>)}{message && <p className="survey-message">{message}</p>}<button className="submit-rating" disabled={saving} onClick={submit}>{saving ? "SAVING..." : ratedToday.includes(selected.id) ? "UPDATE TODAY'S RATING" : "SUBMIT RATING"} <b>→</b></button></section></div>}
+  </main>;
 }

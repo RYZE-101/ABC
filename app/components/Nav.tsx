@@ -2,7 +2,7 @@ import Link from "next/link";
 
 export function Nav({ active }: { active: "play" | "rank" }) {
   return (
-    <header className="topbar">
+    <header className={`topbar ${active}`}>
       <Link className="brand" href="/">DROP<span>/</span>RANK</Link>
       <nav aria-label="Hauptnavigation">
         <Link className={active === "play" ? "active" : ""} href="/">Play</Link>
